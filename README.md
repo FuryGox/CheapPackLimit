@@ -6,8 +6,8 @@ A Stacklands mod that balances early-game card spam by limiting purchases and/or
 
 ## Features
 
-- **Purchase Limit (Variant 1)**: Limits how many times you can buy the cheapest packs before they are temporarily locked (`MAX`).
-- **Price Escalation (Variant 2)**: Increases the cost of cheapest packs each time you buy one.
+- **Purchase Limit**: Limits how many times you can buy the cheapest packs before they are temporarily locked (`MAX`).
+- **Price Escalation**: Increases the cost of cheapest packs each time you buy one.
 - **Independent or Shared Limits**: Configure limits per individual pack or shared across all cheap packs.
 - **Moon-Based Reset Interval**: Set limits to reset every Moon, every $N$ Moons, or never.
 - **Save & Load Persistence**: Automatically saves your purchase counts, locked pack states, and price increases into your save file.
