@@ -84,9 +84,21 @@ namespace LimitBoostersNS
             return PriceIncreaseConfig?.Value ?? 1;
         }
 
+        public static object? CurrentRoundExtraKeyValuesRef = null;
+
         public void Update()
         {
             if (WorldManager.instance == null) return;
+
+            // Detect new save/game session by tracking changes in RoundExtraKeyValues reference
+            var currentKeyValues = WorldManager.instance.RoundExtraKeyValues;
+            if (currentKeyValues != null && !ReferenceEquals(currentKeyValues, CurrentRoundExtraKeyValuesRef))
+            {
+                CurrentRoundExtraKeyValuesRef = currentKeyValues;
+                LoadFromExtraKeyValues();
+                LastResetMonth = WorldManager.instance.CurrentMonth;
+                Log("Save round session changed. Synced counters.");
+            }
 
             int currentMonth = WorldManager.instance.CurrentMonth;
 
@@ -109,7 +121,7 @@ namespace LimitBoostersNS
                 return;
             }
 
-            // Handle new game or earlier save loaded
+            // Handle new game or earlier save loaded (moon decreased)
             if (currentMonth < LastResetMonth)
             {
                 LastResetMonth = currentMonth;
@@ -133,6 +145,10 @@ namespace LimitBoostersNS
             if (WorldManager.instance != null)
             {
                 LastResetMonth = WorldManager.instance.CurrentMonth;
+            }
+            else
+            {
+                LastResetMonth = -1;
             }
             Log($"{reason}: Reset cheap booster limits and price increases.");
         }
