@@ -15,6 +15,8 @@ namespace LimitBoostersNS
         public ConfigEntry<int> PriceIncreaseConfig = null!;
         public ConfigEntry<int> TrackedCheapestCountConfig = null!;
         public ConfigEntry<int> ResetMonthsConfig = null!;
+        public ConfigEntry<bool> UsePercentageConfig = null!;
+        public Dictionary<string, ConfigEntry<int>> BoardPriceIncreaseConfigs = new Dictionary<string, ConfigEntry<int>>();
 
         // State tracking
         public static LimitBoosters Instance = null!;
@@ -30,22 +32,56 @@ namespace LimitBoostersNS
         public override void Ready()
         {
             Instance = this;
+            Logger.Log("LimitBoosters mod is ready.");
 
             // Register Settings for the Mod Options Menu
             MaxPurchasesConfig = Config.GetEntry<int>("Max Purchases", 5);
             MaxPurchasesConfig.UI.Tooltip = "Maximum number of booster packs that can be purchased per month. This limit resets at the start of each new month. Set to -1 or 0 to disable this feature.";
             PerPackLimitConfig = Config.GetEntry<bool>("Limit Per Individual Pack", true);
             PerPackLimitConfig.UI.Tooltip = "Whether the purchase limit applies to each individual booster pack. If false, the limit is applied globally across all packs.";
-            PriceIncreaseConfig = Config.GetEntry<int>("Price Increase per Buy", 1);
-            PriceIncreaseConfig.UI.Tooltip = "Amount by which the price of a booster pack increases with each purchase. Only applies to the tracked cheapest booster packs. Set Tracked Cheapest Packs Count to -1 or 0 to disable this feature.";
+            PriceIncreaseConfig = Config.GetEntry<int>("Price Increase per Buy (Default)", 1);
+            PriceIncreaseConfig.UI.Tooltip = "Default amount by which the price of a booster pack increases with each purchase if no board-specific setting applies. Set to -1 or 0 to disable.";
             TrackedCheapestCountConfig = Config.GetEntry<int>("Cheapest Packs Count", 2);
             TrackedCheapestCountConfig.UI.Tooltip = "Number of cheapest booster packs to track for price increases. Set to -1 or 0 to disable this feature.";
             ResetMonthsConfig = Config.GetEntry<int>("Reset Time (Moons)", 1);
             ResetMonthsConfig.UI.Tooltip = "Number of Moons (CurrentMonth) between resets. Set to 1 to reset every moon (default), 2 to reset every 2 moons, etc. Set to -1 to never reset.";
 
+            UsePercentageConfig = Config.GetEntry<bool>("Use Percentage Increase", false);
+            UsePercentageConfig.UI.Tooltip = "Whether to use percentage-based price increase instead of a flat value (e.g., 20% on a 5-cost pack increases price by +1 to 6, rounded up).";
+
+            if (WorldManager.instance?.Boards != null)
+            {
+                List<GameBoard> gameboard = WorldManager.instance.Boards;
+                Log("Number of game boards: " + gameboard.Count);
+                foreach (var board in gameboard)
+                {
+                    Log("Game board: " + board.Id);
+                    RegisterBoardConfig(board.Id, board.name);
+                }
+            }
+
             // Apply Harmony patches
             Harmony.PatchAll();
             Logger.Log("LimitBoosters initialized with Harmony.");
+        }
+
+        public void RegisterBoardConfig(string boardId, string boardName = "")
+        {
+            if (string.IsNullOrEmpty(boardId) || BoardPriceIncreaseConfigs.ContainsKey(boardId)) return;
+
+            var entry = Config.GetEntry<int>($"Price Increase ({boardName})", 1);
+            entry.UI.Tooltip = $"Price increase per buy for '{boardId}'{(string.IsNullOrEmpty(boardName) ? "" : $" ({boardName})")}. If 'Use Percentage Increase' is true, this represents the percent (e.g. 20 for 20%). Set to -1 or 0 to disable.";
+            BoardPriceIncreaseConfigs[boardId] = entry;
+            Log($"Registered price increase config for board: {boardId}{(string.IsNullOrEmpty(boardName) ? "" : $" ({boardName})")}");
+        }
+
+        public int GetPriceIncreaseForBoard(string boardId)
+        {
+            if (!string.IsNullOrEmpty(boardId) && BoardPriceIncreaseConfigs.TryGetValue(boardId, out var boardConfig))
+            {
+                return boardConfig.Value;
+            }
+            return PriceIncreaseConfig?.Value ?? 1;
         }
 
         public void Update()
@@ -53,6 +89,18 @@ namespace LimitBoostersNS
             if (WorldManager.instance == null) return;
 
             int currentMonth = WorldManager.instance.CurrentMonth;
+
+            // Dynamically register any boards discovered during gameplay
+            if (WorldManager.instance.Boards != null)
+            {
+                foreach (var board in WorldManager.instance.Boards)
+                {
+                    if (!string.IsNullOrEmpty(board.Id) && !BoardPriceIncreaseConfigs.ContainsKey(board.Id))
+                    {
+                        RegisterBoardConfig(board.Id, board.name);
+                    }
+                }
+            }
 
             // Initialize on first frame
             if (LastResetMonth == -1)
@@ -272,16 +320,30 @@ namespace LimitBoostersNS
     {
         public static void Postfix(BuyBoosterBox __instance, ref int __result)
         {
-            int increasePerBuy = LimitBoosters.Instance.PriceIncreaseConfig.Value;
-            if (increasePerBuy == -1 || increasePerBuy <= 0) return;
+            if (LimitBoosters.Instance == null) return;
 
             var cheapPacks = LimitBoosters.GetCheapestBoosterIds();
-            if (cheapPacks.Contains(__instance.BoosterId))
+            if (!cheapPacks.Contains(__instance.BoosterId)) return;
+
+            if (!LimitBoosters.PackPurchases.TryGetValue(__instance.BoosterId, out int boughtCount) || boughtCount <= 0)
+                return;
+
+            string boardId = __instance.MyBoard?.Id ?? WorldManager.instance?.CurrentBoard?.Id ?? "";
+            int increaseSetting = LimitBoosters.Instance.GetPriceIncreaseForBoard(boardId);
+
+            if (increaseSetting == -1 || increaseSetting <= 0) return;
+
+            if (LimitBoosters.Instance.UsePercentageConfig != null && LimitBoosters.Instance.UsePercentageConfig.Value)
             {
-                if (LimitBoosters.PackPurchases.TryGetValue(__instance.BoosterId, out int boughtCount))
-                {
-                    __result += boughtCount * increasePerBuy;
-                }
+                // Percentage increase rounded up (e.g., baseCost = 5, 20% -> +1 per buy => 6)
+                int baseCost = __instance.Cost;
+                int increasePerBuy = Mathf.Max(1, Mathf.CeilToInt(baseCost * (increaseSetting / 100f)));
+                __result += boughtCount * increasePerBuy;
+            }
+            else
+            {
+                // Flat value increase
+                __result += boughtCount * increaseSetting;
             }
         }
     }
