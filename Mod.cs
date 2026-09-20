@@ -23,6 +23,8 @@ namespace LimitBoostersNS
         public static int PurchasesThisMonth = 0;
         public static Dictionary<string, int> PackPurchases = new Dictionary<string, int>();
         public static int LastResetMonth = -1;
+        public static string LastBoardId = "";
+        public static object? CurrentRoundExtraKeyValuesRef = null;
 
         public static void Log(string message)
         {
@@ -84,11 +86,10 @@ namespace LimitBoostersNS
             return PriceIncreaseConfig?.Value ?? 1;
         }
 
-        public static object? CurrentRoundExtraKeyValuesRef = null;
-
         public void Update()
         {
-            if (WorldManager.instance == null) return;
+            if (WorldManager.instance == null || WorldManager.instance.CurrentBoard == null) return;
+            if (WorldManager.instance.CurrentGameState == WorldManager.GameState.InMenu) return;
 
             // Detect new save/game session by tracking changes in RoundExtraKeyValues reference
             var currentKeyValues = WorldManager.instance.RoundExtraKeyValues;
@@ -96,11 +97,9 @@ namespace LimitBoostersNS
             {
                 CurrentRoundExtraKeyValuesRef = currentKeyValues;
                 LoadFromExtraKeyValues();
-                LastResetMonth = WorldManager.instance.CurrentMonth;
+                CheckMonthReset("SessionChange");
                 Log("Save round session changed. Synced counters.");
             }
-
-            int currentMonth = WorldManager.instance.CurrentMonth;
 
             // Dynamically register any boards discovered during gameplay
             if (WorldManager.instance.Boards != null)
@@ -114,27 +113,49 @@ namespace LimitBoostersNS
                 }
             }
 
-            // Initialize on first frame
+            CheckMonthReset("Update");
+        }
+
+        public static void CheckMonthReset(string triggerSource)
+        {
+            if (WorldManager.instance == null || WorldManager.instance.CurrentBoard == null) return;
+            if (WorldManager.instance.CurrentGameState == WorldManager.GameState.InMenu) return;
+
+            string currentBoardId = WorldManager.instance.CurrentBoard.Id;
+            int currentMonth = WorldManager.instance.CurrentMonth;
+            if (currentMonth <= 0) return;
+
+            // Board transition check: if the active board changed, update tracking without miscalculating moon delta
+            if (!string.IsNullOrEmpty(currentBoardId) && !string.IsNullOrEmpty(LastBoardId) && currentBoardId != LastBoardId)
+            {
+                Log($"Switched board from '{LastBoardId}' to '{currentBoardId}'. Updating board tracking.");
+                LastBoardId = currentBoardId;
+                LastResetMonth = currentMonth;
+                SaveToExtraKeyValues();
+                return;
+            }
+            LastBoardId = currentBoardId;
+
+            // Initialize on first frame if not set
             if (LastResetMonth == -1)
             {
                 LastResetMonth = currentMonth;
+                SaveToExtraKeyValues();
                 return;
             }
 
-            // Handle new game or earlier save loaded (moon decreased)
+            // Handle new game or earlier save loaded (moon decreased on the same board)
             if (currentMonth < LastResetMonth)
             {
-                LastResetMonth = currentMonth;
-                ResetMonthlyCounters("New game or earlier save loaded");
+                ResetMonthlyCounters($"Moon decreased (trigger: {triggerSource}, current: {currentMonth} < last: {LastResetMonth})");
                 return;
             }
 
             // Check if the configured number of Moons/Months has passed
-            int resetInterval = ResetMonthsConfig.Value;
+            int resetInterval = Instance?.ResetMonthsConfig?.Value ?? 1;
             if (resetInterval > 0 && (currentMonth - LastResetMonth) >= resetInterval)
             {
-                LastResetMonth = currentMonth;
-                ResetMonthlyCounters($"Reset interval reached ({resetInterval} moon(s) passed)");
+                ResetMonthlyCounters($"Reset interval reached ({resetInterval} moon(s) passed, trigger: {triggerSource}, current: {currentMonth} vs last: {LastResetMonth})");
             }
         }
 
@@ -142,15 +163,17 @@ namespace LimitBoostersNS
         {
             PurchasesThisMonth = 0;
             PackPurchases.Clear();
-            if (WorldManager.instance != null)
+            if (WorldManager.instance != null && WorldManager.instance.CurrentBoard != null && WorldManager.instance.CurrentMonth > 0)
             {
                 LastResetMonth = WorldManager.instance.CurrentMonth;
+                LastBoardId = WorldManager.instance.CurrentBoard.Id;
             }
             else
             {
                 LastResetMonth = -1;
             }
-            Log($"{reason}: Reset cheap booster limits and price increases.");
+            SaveToExtraKeyValues();
+            Log($"{reason}: Reset cheap booster limits and price increases (LastResetMonth={LastResetMonth}).");
         }
 
         #region Save / Load Support
@@ -181,7 +204,11 @@ namespace LimitBoostersNS
                 SetExtraValue("CheapPackLimit_PurchasesThisMonth", PurchasesThisMonth.ToString());
                 SetExtraValue("CheapPackLimit_LastResetMonth", LastResetMonth.ToString());
                 SetExtraValue("CheapPackLimit_PackPurchases", JsonConvert.SerializeObject(PackPurchases));
-                Log("Saved pack limit and price increase data to save file.");
+                if (!string.IsNullOrEmpty(LastBoardId))
+                {
+                    SetExtraValue("CheapPackLimit_LastBoardId", LastBoardId);
+                }
+                Log($"Saved pack limit data: {PurchasesThisMonth} total buys, LastResetMonth={LastResetMonth}, Board={LastBoardId}.");
             }
             catch (Exception ex)
             {
@@ -208,9 +235,23 @@ namespace LimitBoostersNS
                 {
                     LastResetMonth = lastMonth;
                 }
-                else if (WorldManager.instance != null)
+                else if (WorldManager.instance != null && WorldManager.instance.CurrentBoard != null && WorldManager.instance.CurrentMonth > 0)
                 {
                     LastResetMonth = WorldManager.instance.CurrentMonth;
+                }
+                else
+                {
+                    LastResetMonth = -1;
+                }
+
+                string? boardIdStr = GetExtraValue("CheapPackLimit_LastBoardId");
+                if (!string.IsNullOrEmpty(boardIdStr))
+                {
+                    LastBoardId = boardIdStr;
+                }
+                else if (WorldManager.instance?.CurrentBoard != null)
+                {
+                    LastBoardId = WorldManager.instance.CurrentBoard.Id;
                 }
 
                 string? packPurchasesStr = GetExtraValue("CheapPackLimit_PackPurchases");
@@ -224,7 +265,7 @@ namespace LimitBoostersNS
                     PackPurchases.Clear();
                 }
 
-                Log($"Loaded pack limit data: {PurchasesThisMonth} total cheap buys, {PackPurchases.Count} pack records.");
+                Log($"Loaded pack limit data: {PurchasesThisMonth} total cheap buys, {PackPurchases.Count} pack records, LastResetMonth={LastResetMonth}, Board={LastBoardId}.");
             }
             catch (Exception ex)
             {
@@ -302,6 +343,8 @@ namespace LimitBoostersNS
                     LimitBoosters.PackPurchases[__instance.BoosterId] = 0;
 
                 LimitBoosters.PackPurchases[__instance.BoosterId]++;
+
+                LimitBoosters.SaveToExtraKeyValues();
 
                 LimitBoosters.PackPurchases.TryGetValue(__instance.BoosterId, out int packCount);
                 LimitBoosters.Log(
@@ -409,7 +452,22 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
+            LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
             LimitBoosters.LoadFromExtraKeyValues();
+            LimitBoosters.CheckMonthReset("LoadSaveRound");
+        }
+    }
+
+    /// <summary>
+    /// Cleanly initialize counters when a new round is started.
+    /// </summary>
+    [HarmonyPatch(typeof(WorldManager), nameof(WorldManager.StartNewRound))]
+    public static class Patch_WorldManager_StartNewRound
+    {
+        public static void Postfix()
+        {
+            LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
+            LimitBoosters.ResetMonthlyCounters("StartNewRound");
         }
     }
     #endregion
