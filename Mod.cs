@@ -51,6 +51,68 @@ namespace LimitBoostersNS
             UsePercentageConfig = Config.GetEntry<bool>("Use Percentage Increase", false);
             UsePercentageConfig.UI.Tooltip = "Whether to use percentage-based price increase instead of a flat value (e.g., 20% on a 5-cost pack increases price by +1 to 6, rounded up).";
 
+            // Button to Reset Mod Data for the Current Save Round
+            var resetSaveConfig = Config.GetEntry<bool>("ResetCurrentSave", false);
+            resetSaveConfig.UI.Hidden = true;
+            resetSaveConfig.UI.OnUI = (entry) =>
+            {
+                if (ModOptionsScreen.instance == null || PrefabManager.instance?.ButtonPrefab == null) return;
+
+                CustomButton btn = UnityEngine.Object.Instantiate(PrefabManager.instance.ButtonPrefab, ModOptionsScreen.instance.ButtonsParent);
+                btn.transform.localScale = Vector3.one;
+                btn.transform.localPosition = Vector3.zero;
+                btn.transform.localRotation = Quaternion.identity;
+
+                btn.TextMeshPro.text = "Reset Limits (Current Save)";
+                btn.TooltipText = "Immediately resets the purchased booster counters and price increases for the current run/month.";
+                btn.Clicked += () =>
+                {
+                    // 1. Reset memory variables
+                    ResetMonthlyCounters("Manual Config UI Reset");
+
+                    // 2. If in-game, flush to ExtraKeyValues, save game, and refresh booster boxes
+                    if (WorldManager.instance != null && WorldManager.instance.CurrentGameState != WorldManager.GameState.InMenu)
+                    {
+                        SaveToExtraKeyValues();
+                        SaveManager.instance?.Save(saveRound: true);
+
+                        // Refresh Booster text immediately
+                        if (WorldManager.instance.AllBoosterBoxes != null)
+                        {
+                            foreach (var box in WorldManager.instance.AllBoosterBoxes)
+                            {
+                                if (box != null && box.Booster != null && box.Booster.IsUnlocked)
+                                {
+                                    int cost = box.GetCost() - box.StoredCostAmount;
+                                    if (box.BoardCurrency == BoardCurrency.Gold)
+                                        box.BuyText.text = $"{cost}{Icons.Gold}";
+                                    else if (box.BoardCurrency == BoardCurrency.Shell)
+                                        box.BuyText.text = $"{cost}{Icons.Shell}";
+                                    else if (box.BoardCurrency == BoardCurrency.Dollar)
+                                        box.BuyText.text = $"{cost}{Icons.Dollar}";
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // 3. If accessed from Main Menu, also update CurrentSave's LastPlayedRound
+                        var save = SaveManager.instance?.CurrentSave;
+                        if (save?.LastPlayedRound?.ExtraKeyValues != null)
+                        {
+                            var pItem = save.LastPlayedRound.ExtraKeyValues.FirstOrDefault(kv => kv.Key == "CheapPackLimit_PurchasesThisMonth");
+                            if (pItem != null) pItem.Value = "0";
+                            var ppItem = save.LastPlayedRound.ExtraKeyValues.FirstOrDefault(kv => kv.Key == "CheapPackLimit_PackPurchases");
+                            if (ppItem != null) ppItem.Value = "{}";
+                            SaveManager.instance?.Save(save);
+                        }
+                    }
+
+                    btn.TextMeshPro.text = "<color=green>Reset Done!</color>";
+                    Log("Manually reset limits for the current save round from Mod Options.");
+                };
+            };
+
             if (WorldManager.instance?.Boards != null)
             {
                 List<GameBoard> gameboard = WorldManager.instance.Boards;
@@ -275,12 +337,12 @@ namespace LimitBoostersNS
         #endregion
 
         /// <summary>
-        /// Finds the N cheapest booster pack IDs for the active board using base costs from AllBoosterBoxes.
+        /// Finds the N cheapest booster pack IDs for the active board using base costs from BoosterpackData.
         /// If TrackedCheapestCountConfig is -1 (or <= 0), the feature is completely disabled.
         /// </summary>
         public static HashSet<string> GetCheapestBoosterIds()
         {
-            if (WorldManager.instance?.CurrentBoard?.BoosterIds == null || WorldManager.instance.AllBoosterBoxes == null)
+            if (WorldManager.instance?.CurrentBoard?.BoosterIds == null)
                 return new HashSet<string>();
 
             int count = Instance != null ? Instance.TrackedCheapestCountConfig.Value : 2;
@@ -288,11 +350,11 @@ namespace LimitBoostersNS
                 return new HashSet<string>(); // -1 disables tracking completely
 
             return WorldManager.instance.CurrentBoard.BoosterIds
-                .Select(id => WorldManager.instance.AllBoosterBoxes.FirstOrDefault(box => box.BoosterId == id))
-                .Where(box => box != null)
-                .OrderBy(box => box.Cost) // Base cost
+                .Select(id => WorldManager.instance.GetBoosterData(id))
+                .Where(data => data != null)
+                .OrderBy(data => data.Cost) // Base cost from BoosterpackData directly
                 .Take(count)
-                .Select(box => box.BoosterId)
+                .Select(data => data.BoosterId)
                 .ToHashSet();
         }
 
@@ -325,6 +387,18 @@ namespace LimitBoostersNS
 
     
     #region HARMONY PATCHES
+
+    /// <summary>
+    /// Reset limits automatically when a new month begins.
+    /// </summary>
+    [HarmonyPatch(typeof(WorldManager), nameof(WorldManager.IncrementMonth))]
+    public static class Patch_WorldManager_IncrementMonth
+    {
+        public static void Postfix()
+        {
+            LimitBoosters.CheckMonthReset("IncrementMonth");
+        }
+    }
 
     /// <summary>
     /// Track when a booster pack is purchased.
