@@ -25,6 +25,7 @@ namespace LimitBoostersNS
         public static int LastResetMonth = -1;
         public static string LastBoardId = "";
         public static object? CurrentRoundExtraKeyValuesRef = null;
+        private static bool _isInitialized = false;
 
         public static void Log(string message)
         {
@@ -34,6 +35,12 @@ namespace LimitBoostersNS
         public override void Ready()
         {
             Instance = this;
+            if (_isInitialized)
+            {
+                Logger.Log("[Init] LimitBoosters is already initialized. Skipping duplicate Ready() call.");
+                return;
+            }
+            _isInitialized = true;
             Logger.Log("LimitBoosters mod is ready.");
 
             // Register Settings for the Mod Options Menu
@@ -46,7 +53,7 @@ namespace LimitBoostersNS
             TrackedCheapestCountConfig = Config.GetEntry<int>("Cheapest Packs Count", 2);
             TrackedCheapestCountConfig.UI.Tooltip = "Number of cheapest booster packs to track for price increases. Set to -1 or 0 to disable this feature.";
             ResetMonthsConfig = Config.GetEntry<int>("Reset Time (Moons)", 1);
-            ResetMonthsConfig.UI.Tooltip = "Number of Moons (CurrentMonth) between resets. Set to 1 to reset every moon (default), 2 to reset every 2 moons, etc. Set to -1 to never reset.";
+            ResetMonthsConfig.UI.Tooltip = "Number of Moons (CurrentMonth) between resets. Set to 1 to reset every moon (default), 2 to reset every 2 moons, etc. Set to -1 or 0 to disable reset.";
 
             UsePercentageConfig = Config.GetEntry<bool>("Use Percentage Increase", false);
             UsePercentageConfig.UI.Tooltip = "Whether to use percentage-based price increase instead of a flat value (e.g., 20% on a 5-cost pack increases price by +1 to 6, rounded up).";
@@ -126,6 +133,16 @@ namespace LimitBoostersNS
                     Log($"[Boards] Board found: Id='{board.Id}', Name='{board.name}'");
                     RegisterBoardConfig(board.Id, board.name);
                 }
+            }
+
+            // Safely unpatch any existing patches with this instance ID before applying to prevent duplicate hooks
+            try
+            {
+                Harmony?.UnpatchAll(Harmony.Id);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[Init] Note: UnpatchAll cleanup returned: {ex.Message}");
             }
 
             // Apply Harmony patches
@@ -416,8 +433,19 @@ namespace LimitBoostersNS
     [HarmonyPatch(typeof(BuyBoosterBox), "CreateBoosterPack")]
     public static class Patch_BuyBoosterBox_CreateBoosterPack
     {
+        private static int _lastPurchasedFrame = -1;
+        private static BuyBoosterBox? _lastPurchasedBox = null;
+
         public static void Postfix(BuyBoosterBox __instance)
         {
+            // Safeguard against duplicate hook executions on the same booster box in the exact same frame
+            if (Time.frameCount == _lastPurchasedFrame && ReferenceEquals(_lastPurchasedBox, __instance))
+            {
+                LimitBoosters.Log($"[BuyPack] Duplicate purchase call detected on booster box '{__instance.BoosterId}' in frame {Time.frameCount}. Skipped duplicate.");
+                return;
+            }
+            _lastPurchasedFrame = Time.frameCount;
+            _lastPurchasedBox = __instance;
             string boardId = __instance.MyBoard?.Id ?? WorldManager.instance?.CurrentBoard?.Id ?? "UnknownBoard";
             int baseCost = __instance.Cost;
             int cost = __instance.GetCost();
