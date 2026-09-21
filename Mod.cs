@@ -51,6 +51,8 @@ namespace LimitBoostersNS
             UsePercentageConfig = Config.GetEntry<bool>("Use Percentage Increase", false);
             UsePercentageConfig.UI.Tooltip = "Whether to use percentage-based price increase instead of a flat value (e.g., 20% on a 5-cost pack increases price by +1 to 6, rounded up).";
 
+            Logger.Log($"[Config] Initial settings: MaxPurchases={MaxPurchasesConfig.Value}, PerPackLimit={PerPackLimitConfig.Value}, PriceIncreaseDefault={PriceIncreaseConfig.Value}, TrackedCheapestCount={TrackedCheapestCountConfig.Value}, ResetMonths={ResetMonthsConfig.Value}, UsePercentage={UsePercentageConfig.Value}");
+
             // Button to Reset Mod Data for the Current Save Round
             var resetSaveConfig = Config.GetEntry<bool>("ResetCurrentSave", false);
             resetSaveConfig.UI.Hidden = true;
@@ -75,6 +77,7 @@ namespace LimitBoostersNS
                     {
                         SaveToExtraKeyValues();
                         SaveManager.instance?.Save(saveRound: true);
+                        Log("[Save] In-game manual reset saved via SaveManager.Save(saveRound: true).");
 
                         // Refresh Booster text immediately
                         if (WorldManager.instance.AllBoosterBoxes != null)
@@ -105,21 +108,22 @@ namespace LimitBoostersNS
                             var ppItem = save.LastPlayedRound.ExtraKeyValues.FirstOrDefault(kv => kv.Key == "CheapPackLimit_PackPurchases");
                             if (ppItem != null) ppItem.Value = "{}";
                             SaveManager.instance?.Save(save);
+                            Log("[Save] Main menu manual reset saved via SaveManager.Save(save).");
                         }
                     }
 
                     btn.TextMeshPro.text = "<color=green>Reset Done!</color>";
-                    Log("Manually reset limits for the current save round from Mod Options.");
+                    Log("[Reset] Manually reset limits for the current save round from Mod Options.");
                 };
             };
 
             if (WorldManager.instance?.Boards != null)
             {
                 List<GameBoard> gameboard = WorldManager.instance.Boards;
-                Log("Number of game boards: " + gameboard.Count);
+                Log($"[Boards] Discovered {gameboard.Count} game board(s).");
                 foreach (var board in gameboard)
                 {
-                    Log("Game board: " + board.Id);
+                    Log($"[Boards] Board found: Id='{board.Id}', Name='{board.name}'");
                     RegisterBoardConfig(board.Id, board.name);
                 }
             }
@@ -136,7 +140,7 @@ namespace LimitBoostersNS
             var entry = Config.GetEntry<int>($"Price Increase ({boardName})", 1);
             entry.UI.Tooltip = $"Price increase per buy for '{boardId}'{(string.IsNullOrEmpty(boardName) ? "" : $" ({boardName})")}. If 'Use Percentage Increase' is true, this represents the percent (e.g. 20 for 20%). Set to -1 or 0 to disable.";
             BoardPriceIncreaseConfigs[boardId] = entry;
-            Log($"Registered price increase config for board: {boardId}{(string.IsNullOrEmpty(boardName) ? "" : $" ({boardName})")}");
+            Log($"[Config] Registered board price increase for '{boardId}'{(string.IsNullOrEmpty(boardName) ? "" : $" ({boardName})")}: value={entry.Value}");
         }
 
         public int GetPriceIncreaseForBoard(string boardId)
@@ -160,7 +164,7 @@ namespace LimitBoostersNS
                 CurrentRoundExtraKeyValuesRef = currentKeyValues;
                 LoadFromExtraKeyValues();
                 CheckMonthReset("SessionChange");
-                Log("Save round session changed. Synced counters.");
+                Log($"[Session] Save round session changed. Synced counters: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}'.");
             }
 
             // Dynamically register any boards discovered during gameplay
@@ -190,7 +194,7 @@ namespace LimitBoostersNS
             // Board transition check: if the active board changed, update tracking without miscalculating moon delta
             if (!string.IsNullOrEmpty(currentBoardId) && !string.IsNullOrEmpty(LastBoardId) && currentBoardId != LastBoardId)
             {
-                Log($"Switched board from '{LastBoardId}' to '{currentBoardId}'. Updating board tracking.");
+                Log($"[BoardSwitch] Switched board from '{LastBoardId}' to '{currentBoardId}' (CurrentMonth={currentMonth}, LastResetMonth={LastResetMonth}). Updating board tracking.");
                 LastBoardId = currentBoardId;
                 LastResetMonth = currentMonth;
                 SaveToExtraKeyValues();
@@ -202,6 +206,8 @@ namespace LimitBoostersNS
             if (LastResetMonth == -1)
             {
                 LastResetMonth = currentMonth;
+                int resetIntervalVal = Instance?.ResetMonthsConfig?.Value ?? 1;
+                Log($"[MonthReset] Initialized LastResetMonth={LastResetMonth} on board '{currentBoardId}' (CurrentMonth={currentMonth}, ResetInterval={resetIntervalVal}).");
                 SaveToExtraKeyValues();
                 return;
             }
@@ -223,6 +229,8 @@ namespace LimitBoostersNS
 
         public static void ResetMonthlyCounters(string reason = "Reset")
         {
+            int oldPurchases = PurchasesThisMonth;
+            int oldPacksCount = PackPurchases.Count;
             PurchasesThisMonth = 0;
             PackPurchases.Clear();
             if (WorldManager.instance != null && WorldManager.instance.CurrentBoard != null && WorldManager.instance.CurrentMonth > 0)
@@ -235,7 +243,7 @@ namespace LimitBoostersNS
                 LastResetMonth = -1;
             }
             SaveToExtraKeyValues();
-            Log($"{reason}: Reset cheap booster limits and price increases (LastResetMonth={LastResetMonth}).");
+            Log($"[Reset] {reason}: Reset cheap booster limits and price increases (Previous: PurchasesThisMonth={oldPurchases}, PackRecords={oldPacksCount} -> New: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}').");
         }
 
         #region Save / Load Support
@@ -265,16 +273,17 @@ namespace LimitBoostersNS
             {
                 SetExtraValue("CheapPackLimit_PurchasesThisMonth", PurchasesThisMonth.ToString());
                 SetExtraValue("CheapPackLimit_LastResetMonth", LastResetMonth.ToString());
-                SetExtraValue("CheapPackLimit_PackPurchases", JsonConvert.SerializeObject(PackPurchases));
+                string packPurchasesJson = JsonConvert.SerializeObject(PackPurchases);
+                SetExtraValue("CheapPackLimit_PackPurchases", packPurchasesJson);
                 if (!string.IsNullOrEmpty(LastBoardId))
                 {
                     SetExtraValue("CheapPackLimit_LastBoardId", LastBoardId);
                 }
-                Log($"Saved pack limit data: {PurchasesThisMonth} total buys, LastResetMonth={LastResetMonth}, Board={LastBoardId}.");
+                Log($"[Save] Saved pack limit data to RoundExtraKeyValues: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}', PackPurchases={packPurchasesJson}");
             }
             catch (Exception ex)
             {
-                Log($"Error saving pack limit data: {ex.Message}");
+                Log($"[Save] Error saving pack limit data: {ex.Message}");
             }
         }
 
@@ -327,11 +336,11 @@ namespace LimitBoostersNS
                     PackPurchases.Clear();
                 }
 
-                Log($"Loaded pack limit data: {PurchasesThisMonth} total cheap buys, {PackPurchases.Count} pack records, LastResetMonth={LastResetMonth}, Board={LastBoardId}.");
+                Log($"[Load] Loaded pack limit data from RoundExtraKeyValues: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}', PackPurchases={packPurchasesStr ?? "{}"}");
             }
             catch (Exception ex)
             {
-                Log($"Error loading pack limit data: {ex.Message}");
+                Log($"[Load] Error loading pack limit data: {ex.Message}");
             }
         }
         #endregion
@@ -396,6 +405,7 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
+            LimitBoosters.Log($"[Month] WorldManager.IncrementMonth triggered (New Month: {WorldManager.instance?.CurrentMonth}). Checking month reset...");
             LimitBoosters.CheckMonthReset("IncrementMonth");
         }
     }
@@ -408,8 +418,17 @@ namespace LimitBoostersNS
     {
         public static void Postfix(BuyBoosterBox __instance)
         {
+            string boardId = __instance.MyBoard?.Id ?? WorldManager.instance?.CurrentBoard?.Id ?? "UnknownBoard";
+            int baseCost = __instance.Cost;
+            int cost = __instance.GetCost();
+            int increase = cost - baseCost;
+            string currency = __instance.BoardCurrency.ToString();
+            int currentMonth = WorldManager.instance?.CurrentMonth ?? -1;
+
             var cheapPacks = LimitBoosters.GetCheapestBoosterIds();
-            if (cheapPacks.Contains(__instance.BoosterId))
+            bool isCheapPack = cheapPacks.Contains(__instance.BoosterId);
+
+            if (isCheapPack)
             {
                 LimitBoosters.PurchasesThisMonth++;
 
@@ -421,8 +440,17 @@ namespace LimitBoostersNS
                 LimitBoosters.SaveToExtraKeyValues();
 
                 LimitBoosters.PackPurchases.TryGetValue(__instance.BoosterId, out int packCount);
+                int maxLimit = LimitBoosters.Instance != null ? LimitBoosters.Instance.MaxPurchasesConfig.Value : 5;
+                bool isLimited = LimitBoosters.IsPackLimitReached(__instance.BoosterId);
+                string limitStr = maxLimit <= 0 ? "Unlimited" : $"{packCount}/{maxLimit}";
+
                 LimitBoosters.Log(
-                    $"Bought pack '{__instance.BoosterId}'. Pack buys: {packCount}, Total cheap buys: {LimitBoosters.PurchasesThisMonth}");
+                    $"[BuyPack] Purchased cheap booster '{__instance.BoosterId}' on board '{boardId}' (Month: {currentMonth}) | Cost: {cost} {currency} (Base: {baseCost}, Increase: +{increase}) | Pack buys: {limitStr} | Total cheap buys this month: {LimitBoosters.PurchasesThisMonth} | Status: {(isLimited ? "LOCKED (Limit Reached)" : "Available")}");
+            }
+            else
+            {
+                LimitBoosters.Log(
+                    $"[BuyPack] Purchased regular booster '{__instance.BoosterId}' on board '{boardId}' (Month: {currentMonth}) | Cost: {cost} {currency} (Base: {baseCost}) | Status: Untracked");
             }
         }
     }
@@ -514,6 +542,7 @@ namespace LimitBoostersNS
     {
         public static void Prefix()
         {
+            LimitBoosters.Log($"[Save] WorldManager.GetSaveRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}', PurchasesThisMonth: {LimitBoosters.PurchasesThisMonth}, LastResetMonth: {LimitBoosters.LastResetMonth}, PackPurchases: {JsonConvert.SerializeObject(LimitBoosters.PackPurchases)}). Persisting pack limit data...");
             LimitBoosters.SaveToExtraKeyValues();
         }
     }
@@ -526,6 +555,7 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
+            LimitBoosters.Log($"[Load] WorldManager.LoadSaveRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}'). Loading pack limit data...");
             LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
             LimitBoosters.LoadFromExtraKeyValues();
             LimitBoosters.CheckMonthReset("LoadSaveRound");
@@ -540,6 +570,7 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
+            LimitBoosters.Log($"[NewRound] WorldManager.StartNewRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}'). Initializing counters...");
             LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
             LimitBoosters.ResetMonthlyCounters("StartNewRound");
         }
