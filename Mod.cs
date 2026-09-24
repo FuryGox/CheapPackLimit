@@ -19,10 +19,21 @@ namespace LimitBoostersNS
         public ConfigEntry<bool> PerBoardPriceIncreaseConfig = null!;
         public Dictionary<string, ConfigEntry<int>> BoardPriceIncreaseConfigs = new Dictionary<string, ConfigEntry<int>>();
 
+        // Board Activation Condition Settings
+        public ConfigEntry<bool> EnableBoardConditionsConfig = null!;
+        public ConfigEntry<bool> EnableMoonConditionConfig = null!;
+        public ConfigEntry<int> ActivationMoonConfig = null!;
+        public ConfigEntry<bool> EnableCardConditionConfig = null!;
+        public ConfigEntry<string> ActivationCardIdConfig = null!;
+        public ConfigEntry<int> ActivationCardCountConfig = null!;
+        public ConfigEntry<bool> RequireAllConditionsConfig = null!;
+        public ConfigEntry<bool> PersistentActivationConfig = null!;
+
         // State tracking
         public static LimitBoosters Instance = null!;
         public static int PurchasesThisMonth = 0;
         public static Dictionary<string, int> PackPurchases = new Dictionary<string, int>();
+        public static HashSet<string> ActivatedBoards = new HashSet<string>();
         public static int LastResetMonth = -1;
         public static string LastBoardId = "";
         public static object? CurrentRoundExtraKeyValuesRef = null;
@@ -61,7 +72,32 @@ namespace LimitBoostersNS
             UsePercentageConfig = Config.GetEntry<bool>("Use Percentage Increase", false);
             UsePercentageConfig.UI.Tooltip = "Whether to use percentage-based price increase instead of a flat value (e.g., 20% on a 5-cost pack increases price by +1 to 6, rounded up).";
 
-            Logger.Log($"[Config] Initial settings: MaxPurchases={MaxPurchasesConfig.Value}, PerPackLimit={PerPackLimitConfig.Value}, PriceIncreaseDefault={PriceIncreaseConfig.Value}, PerBoardPriceIncrease={PerBoardPriceIncreaseConfig.Value}, TrackedCheapestCount={TrackedCheapestCountConfig.Value}, ResetMonths={ResetMonthsConfig.Value}, UsePercentage={UsePercentageConfig.Value}");
+            // Register Board Activation Condition Settings
+            EnableBoardConditionsConfig = Config.GetEntry<bool>("Enable Board Conditions", false);
+            EnableBoardConditionsConfig.UI.Tooltip = "Whether to only activate the mod (limits and price increases) on a board once specific conditions are met. If disabled (default), the mod is always active on all boards.";
+
+            EnableMoonConditionConfig = Config.GetEntry<bool>("Condition: By Moon", false);
+            EnableMoonConditionConfig.UI.Tooltip = "Activate the mod on a board once the Moon number reaches or passes the specified threshold.";
+
+            ActivationMoonConfig = Config.GetEntry<int>("Condition: Activation Moon", 5);
+            ActivationMoonConfig.UI.Tooltip = "The Moon number at or after which the mod activates (CurrentMonth >= value). For example, 5 means active starting on Moon 5. Set to 0 or -1 to disable.";
+
+            EnableCardConditionConfig = Config.GetEntry<bool>("Condition: By Card Count", false);
+            EnableCardConditionConfig.UI.Tooltip = "Activate the mod on a board when a specific card count threshold is reached on that board.";
+
+            ActivationCardIdConfig = Config.GetEntry<string>("Condition: Card ID to Count", "villager");
+            ActivationCardIdConfig.UI.Tooltip = "The Card ID to count on the board (e.g., 'villager', 'coin', 'wood'). Multiple IDs can be separated by commas (e.g., 'villager, militia'). Leave blank to count ALL cards on the board.";
+
+            ActivationCardCountConfig = Config.GetEntry<int>("Condition: Required Card Count", 10);
+            ActivationCardCountConfig.UI.Tooltip = "Minimum number of cards required on the board to activate the mod. Set to 0 or -1 to disable.";
+
+            RequireAllConditionsConfig = Config.GetEntry<bool>("Condition: Require ALL (AND)", false);
+            RequireAllConditionsConfig.UI.Tooltip = "If enabled, ALL active conditions (Moon AND Card Count) must be satisfied. If disabled (default), satisfying EITHER condition (Moon OR Card Count) will activate the mod.";
+
+            PersistentActivationConfig = Config.GetEntry<bool>("Condition: Stay Active Once Triggered", false);
+            PersistentActivationConfig.UI.Tooltip = "Once a board satisfies the activation conditions, keep the mod active permanently on that board (even if card count drops). If false (default), conditions are evaluated dynamically.";
+
+            Logger.Log($"[Config] Initial settings: MaxPurchases={MaxPurchasesConfig.Value}, PerPackLimit={PerPackLimitConfig.Value}, PriceIncreaseDefault={PriceIncreaseConfig.Value}, PerBoardPriceIncrease={PerBoardPriceIncreaseConfig.Value}, TrackedCheapestCount={TrackedCheapestCountConfig.Value}, ResetMonths={ResetMonthsConfig.Value}, UsePercentage={UsePercentageConfig.Value}, EnableConditions={EnableBoardConditionsConfig.Value}, ByMoon={EnableMoonConditionConfig.Value} (Moon={ActivationMoonConfig.Value}), ByCard={EnableCardConditionConfig.Value} (Id='{ActivationCardIdConfig.Value}', Count={ActivationCardCountConfig.Value}), RequireAll={RequireAllConditionsConfig.Value}, PersistentActivation={PersistentActivationConfig.Value}");
 
             // Button to Reset Mod Data for the Current Save Round
             var resetSaveConfig = Config.GetEntry<bool>("ResetCurrentSave", false);
@@ -76,11 +112,12 @@ namespace LimitBoostersNS
                 btn.transform.localRotation = Quaternion.identity;
 
                 btn.TextMeshPro.text = "Reset Limits (Current Save)";
-                btn.TooltipText = "Immediately resets the purchased booster counters and price increases for the current run/month.";
+                btn.TooltipText = "Immediately resets the purchased booster counters, price increases, and board activation states for the current run/month.";
                 btn.Clicked += () =>
                 {
                     // 1. Reset memory variables
                     ResetMonthlyCounters("Manual Config UI Reset");
+                    ActivatedBoards.Clear();
 
                     // 2. If in-game, flush to ExtraKeyValues, save game, and refresh booster boxes
                     if (WorldManager.instance != null && WorldManager.instance.CurrentGameState != WorldManager.GameState.InMenu)
@@ -117,13 +154,15 @@ namespace LimitBoostersNS
                             if (pItem != null) pItem.Value = "0";
                             var ppItem = save.LastPlayedRound.ExtraKeyValues.FirstOrDefault(kv => kv.Key == "CheapPackLimit_PackPurchases");
                             if (ppItem != null) ppItem.Value = "{}";
+                            var actItem = save.LastPlayedRound.ExtraKeyValues.FirstOrDefault(kv => kv.Key == "CheapPackLimit_ActivatedBoards");
+                            if (actItem != null) actItem.Value = "";
                             SaveManager.instance?.Save(save);
                             Log("[Save] Main menu manual reset saved via SaveManager.Save(save).");
                         }
                     }
 
                     btn.TextMeshPro.text = "<color=green>Reset Done!</color>";
-                    Log("[Reset] Manually reset limits for the current save round from Mod Options.");
+                    Log("[Reset] Manually reset limits and board activations for the current save round from Mod Options.");
                 };
             };
 
@@ -306,7 +345,8 @@ namespace LimitBoostersNS
                 {
                     SetExtraValue("CheapPackLimit_LastBoardId", LastBoardId);
                 }
-                Log($"[Save] Saved pack limit data to RoundExtraKeyValues: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}', PackPurchases={packPurchasesJson}");
+                SetExtraValue("CheapPackLimit_ActivatedBoards", string.Join(",", ActivatedBoards));
+                Log($"[Save] Saved pack limit data to RoundExtraKeyValues: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}', ActivatedBoards='{string.Join(",", ActivatedBoards)}', PackPurchases={packPurchasesJson}");
             }
             catch (Exception ex)
             {
@@ -363,7 +403,17 @@ namespace LimitBoostersNS
                     PackPurchases.Clear();
                 }
 
-                Log($"[Load] Loaded pack limit data from RoundExtraKeyValues: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}', PackPurchases={packPurchasesStr ?? "{}"}");
+                string? activatedStr = GetExtraValue("CheapPackLimit_ActivatedBoards");
+                ActivatedBoards.Clear();
+                if (!string.IsNullOrEmpty(activatedStr))
+                {
+                    foreach (var b in activatedStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (!string.IsNullOrWhiteSpace(b)) ActivatedBoards.Add(b.Trim());
+                    }
+                }
+
+                Log($"[Load] Loaded pack limit data from RoundExtraKeyValues: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}', ActivatedBoards='{string.Join(",", ActivatedBoards)}', PackPurchases={packPurchasesStr ?? "{}"}");
             }
             catch (Exception ex)
             {
@@ -403,6 +453,9 @@ namespace LimitBoostersNS
         {
             if (Instance == null) return false;
 
+            // If board activation conditions are not met, the mod is inactive on this board
+            if (!IsBoardConditionMet()) return false;
+
             int limit = Instance.MaxPurchasesConfig.Value;
             if (limit == -1 || limit <= 0) return false;
 
@@ -418,6 +471,155 @@ namespace LimitBoostersNS
             {
                 return PurchasesThisMonth >= limit;
             }
+        }
+
+        /// <summary>
+        /// Gets the current Moon/Month for a specific board.
+        /// </summary>
+        public static int GetMoonForBoard(GameBoard? board)
+        {
+            if (WorldManager.instance == null) return 1;
+            if (board == null || board == WorldManager.instance.CurrentBoard)
+            {
+                return WorldManager.instance.CurrentMonth;
+            }
+            if (WorldManager.instance.BoardMonths != null && !string.IsNullOrEmpty(board.Id))
+            {
+                string id = board.Id.ToLowerInvariant();
+                if (id == "main" || id == "mainland") return WorldManager.instance.BoardMonths.MainMonth;
+                if (id == "island") return WorldManager.instance.BoardMonths.IslandMonth;
+                if (id == "forest") return WorldManager.instance.BoardMonths.ForestMonth;
+                if (id == "greed") return WorldManager.instance.BoardMonths.GreedMonth;
+                if (id == "happiness") return WorldManager.instance.BoardMonths.HappinessMonth;
+                if (id == "death") return WorldManager.instance.BoardMonths.DeathMonth;
+                if (id == "cities") return WorldManager.instance.BoardMonths.CitiesMonth;
+            }
+            return WorldManager.instance.CurrentMonth;
+        }
+
+        /// <summary>
+        /// Counts cards matching cardId on a specific board.
+        /// If cardId is empty or '*', returns the total non-destroyed cards on the board.
+        /// Supports comma/semicolon separated IDs (e.g. 'villager, militia').
+        /// </summary>
+        public static int GetCardCountOnBoard(GameBoard? board, string cardId)
+        {
+            if (board == null || WorldManager.instance == null) return 0;
+
+            var cards = WorldManager.instance.GetAllCardsOnBoard(board.Id);
+            if (cards == null) return 0;
+
+            if (string.IsNullOrWhiteSpace(cardId) || cardId.Trim() == "*")
+            {
+                return cards.Count(c => c != null && !c.Destroyed);
+            }
+
+            var ids = cardId.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(s => s.Trim().ToLowerInvariant())
+                            .ToHashSet();
+
+            return cards.Count(c => c != null && !c.Destroyed && c.CardData != null && ids.Contains(c.CardData.Id.ToLowerInvariant()));
+        }
+
+        /// <summary>
+        /// Evaluates whether the mod activation conditions are satisfied for the given board.
+        /// If board is null, evaluates against WorldManager.instance.CurrentBoard.
+        /// </summary>
+        public static bool IsBoardConditionMet(GameBoard? board, out string reason)
+        {
+            if (Instance == null || Instance.EnableBoardConditionsConfig == null || !Instance.EnableBoardConditionsConfig.Value)
+            {
+                reason = "Conditions disabled (Mod always active)";
+                return true;
+            }
+
+            if (WorldManager.instance == null)
+            {
+                reason = "No WorldManager";
+                return true;
+            }
+
+            GameBoard? targetBoard = board ?? WorldManager.instance.CurrentBoard;
+            if (targetBoard == null)
+            {
+                reason = "No active board";
+                return true;
+            }
+
+            string boardId = targetBoard.Id ?? "";
+
+            // If persistent activation is enabled and this board was previously triggered, stay active
+            if (Instance.PersistentActivationConfig != null && Instance.PersistentActivationConfig.Value && ActivatedBoards.Contains(boardId))
+            {
+                reason = $"Board '{boardId}' previously met conditions (Persistent)";
+                return true;
+            }
+
+            bool checkMoon = Instance.EnableMoonConditionConfig != null && Instance.EnableMoonConditionConfig.Value;
+            bool checkCard = Instance.EnableCardConditionConfig != null && Instance.EnableCardConditionConfig.Value;
+
+            // If neither condition toggle is enabled, do not restrict the mod
+            if (!checkMoon && !checkCard)
+            {
+                reason = "No condition enabled (Mod active)";
+                return true;
+            }
+
+            bool moonMet = true;
+            int currentMoon = GetMoonForBoard(targetBoard);
+            int targetMoon = Instance.ActivationMoonConfig?.Value ?? 1;
+            if (checkMoon)
+            {
+                moonMet = targetMoon <= 0 || currentMoon >= targetMoon;
+            }
+
+            bool cardMet = true;
+            int targetCardCount = Instance.ActivationCardCountConfig?.Value ?? 0;
+            string targetCardId = Instance.ActivationCardIdConfig?.Value ?? "";
+            int currentCardCount = 0;
+            if (checkCard)
+            {
+                currentCardCount = GetCardCountOnBoard(targetBoard, targetCardId);
+                cardMet = targetCardCount <= 0 || currentCardCount >= targetCardCount;
+            }
+
+            bool requireAll = Instance.RequireAllConditionsConfig != null && Instance.RequireAllConditionsConfig.Value;
+            bool isMet;
+
+            if (checkMoon && checkCard)
+            {
+                isMet = requireAll ? (moonMet && cardMet) : (moonMet || cardMet);
+                string op = requireAll ? "AND" : "OR";
+                reason = $"Board '{boardId}' - Moon: {currentMoon}/{targetMoon} ({(moonMet ? "Pass" : "Fail")}) {op} Cards ('{(string.IsNullOrEmpty(targetCardId) ? "All" : targetCardId)}'): {currentCardCount}/{targetCardCount} ({(cardMet ? "Pass" : "Fail")}) => {(isMet ? "ACTIVE" : "INACTIVE")}";
+            }
+            else if (checkMoon)
+            {
+                isMet = moonMet;
+                reason = $"Board '{boardId}' - Moon: {currentMoon}/{targetMoon} => {(isMet ? "ACTIVE" : "INACTIVE")}";
+            }
+            else
+            {
+                isMet = cardMet;
+                reason = $"Board '{boardId}' - Cards ('{(string.IsNullOrEmpty(targetCardId) ? "All" : targetCardId)}'): {currentCardCount}/{targetCardCount} => {(isMet ? "ACTIVE" : "INACTIVE")}";
+            }
+
+            // If conditions are met and persistent activation is enabled, persist state for this board
+            if (isMet && Instance.PersistentActivationConfig != null && Instance.PersistentActivationConfig.Value && !string.IsNullOrEmpty(boardId))
+            {
+                if (!ActivatedBoards.Contains(boardId))
+                {
+                    ActivatedBoards.Add(boardId);
+                    SaveToExtraKeyValues();
+                    Log($"[Condition] Board '{boardId}' met activation conditions and is now persistently marked as ACTIVE.");
+                }
+            }
+
+            return isMet;
+        }
+
+        public static bool IsBoardConditionMet(GameBoard? board = null)
+        {
+            return IsBoardConditionMet(board, out _);
         }
     }
 
@@ -457,11 +659,19 @@ namespace LimitBoostersNS
             _lastPurchasedFrame = Time.frameCount;
             _lastPurchasedBox = __instance;
             string boardId = __instance.MyBoard?.Id ?? WorldManager.instance?.CurrentBoard?.Id ?? "UnknownBoard";
+            var board = __instance.MyBoard ?? WorldManager.instance?.CurrentBoard;
             int baseCost = __instance.Cost;
             int cost = __instance.GetCost();
             int increase = cost - baseCost;
             string currency = __instance.BoardCurrency.ToString();
             int currentMonth = WorldManager.instance?.CurrentMonth ?? -1;
+
+            if (!LimitBoosters.IsBoardConditionMet(board, out string conditionReason))
+            {
+                LimitBoosters.Log(
+                    $"[BuyPack] Board '{boardId}' condition not met ({conditionReason}). Mod is inactive on this board. Pack '{__instance.BoosterId}' bought at base cost without tracking.");
+                return;
+            }
 
             var cheapPacks = LimitBoosters.GetCheapestBoosterIds();
             bool isCheapPack = cheapPacks.Contains(__instance.BoosterId);
@@ -521,6 +731,9 @@ namespace LimitBoostersNS
         public static void Postfix(BuyBoosterBox __instance, ref int __result)
         {
             if (LimitBoosters.Instance == null) return;
+
+            var board = __instance.MyBoard ?? WorldManager.instance?.CurrentBoard;
+            if (!LimitBoosters.IsBoardConditionMet(board)) return;
 
             var cheapPacks = LimitBoosters.GetCheapestBoosterIds();
             if (!cheapPacks.Contains(__instance.BoosterId)) return;
@@ -623,6 +836,7 @@ namespace LimitBoostersNS
         {
             LimitBoosters.Log($"[NewRound] WorldManager.StartNewRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}'). Initializing counters...");
             LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
+            LimitBoosters.ActivatedBoards.Clear();
             LimitBoosters.ResetMonthlyCounters("StartNewRound");
         }
     }
