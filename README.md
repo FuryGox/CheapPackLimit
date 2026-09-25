@@ -29,6 +29,14 @@ You can adjust these settings in-game via **Options > Mod Options > Limit Booste
 | **`Price Increase ({boardId})`** | `int` | `1` | Dynamically created for each game board (e.g., `Price Increase (main)`, `Price Increase (island)`). Specifies the price increase amount (flat or percent) for that board.<br>• Set to `-1` or `0` to disable for that board. |
 | **`Cheapest Packs Count`** | `int` | `2` | Number of cheapest booster packs per board tracked by this mod (e.g. `2` tracks the 2 lowest-cost packs like *Humble Beginning* @ 3g and *Seeking Answers* @ 4g).<br>• Set to `-1` or `0` to completely disable all mod features. |
 | **`Reset Time (Moons)`** | `int` | `1` | How often purchase limits and price increases reset, measured in game Moons (`CurrentMonth`):<br>• `1`: Resets every Moon at the start of each month (default).<br>• `2`, `3`, etc.: Limits and price increases persist across multiple moons before resetting.<br>• `-1`: Never resets for the remainder of the run. |
+| **`Enable Board Conditions`** | `bool` | `false` | Master switch to only activate limits and price increases on a board once specific conditions are satisfied. If false (default), the mod is always active everywhere. |
+| **`Condition: By Moon`** | `bool` | `false` | When enabled, requires reaching or passing the target Moon number before the mod activates. |
+| **`Condition: Activation Moon`** | `int` | `5` | Target Moon number (e.g., `5` means active starting on Moon 5). Must be 1 or higher. |
+| **`Condition: By Card Count`** | `bool` | `false` | When enabled, requires reaching a specific card count on the board before the mod activates. |
+| **`Condition: Card ID to Count`** | `string` | `villager` | Card ID(s) to count (e.g., `villager`, `coin`, or comma-separated `villager, militia`). Leave blank or `*` to count all cards on board. |
+| **`Condition: Required Card Count`** | `int` | `10` | Minimum number of matching cards required to activate the mod. Must be 1 or higher. |
+| **`Condition: Require ALL (AND)`** | `bool` | `false` | If enabled, ALL active conditions (Moon AND Card Count) must be satisfied. If disabled (default), satisfying EITHER condition (Moon OR Card Count) will activate the mod. |
+| **`Condition: Stay Active Once Triggered`** | `bool` | `false` | If true, once a board meets activation conditions, it stays active permanently for that board. If false (default), conditions are evaluated dynamically in real time. |
 
 ---
 
