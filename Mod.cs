@@ -58,47 +58,62 @@ namespace LimitBoostersNS
             _isInitialized = true;
             Logger.Log("LimitBoosters mod is ready.");
 
-            // Register Settings for the Mod Options Menu
-            MaxPurchasesConfig = Config.GetEntry<int>("Max Purchases", 5);
-            MaxPurchasesConfig.UI.Tooltip = "Maximum number of booster packs that can be purchased per month. This limit resets at the start of each new month. Set to -1 or 0 to disable this feature.";
-            PerPackLimitConfig = Config.GetEntry<bool>("Limit Per Individual Pack", true);
-            PerPackLimitConfig.UI.Tooltip = "Whether purchase limits and price increases apply to each individual booster pack. If false, limits and price increases are shared globally across all cheap packs.";
-            PriceIncreaseConfig = Config.GetEntry<int>("Price Increase per Buy (Default)", 1);
-            PriceIncreaseConfig.UI.Tooltip = "Default amount by which the price of a booster pack increases with each purchase. Set to -1 or 0 to disable price increases.";
-            PerBoardPriceIncreaseConfig = Config.GetEntry<bool>("Enable Board Specific Prices", false);
-            PerBoardPriceIncreaseConfig.UI.Tooltip = "Whether to use custom price increase settings for each specific board. If false (default), 'Price Increase per Buy (Default)' is used for all boards.";
-            TrackedCheapestCountConfig = Config.GetEntry<int>("Cheapest Packs Count", 2);
-            TrackedCheapestCountConfig.UI.Tooltip = "Number of cheapest booster packs to track for price increases. Set to -1 or 0 to disable this feature.";
-            ResetMonthsConfig = Config.GetEntry<int>("Reset Time (Moons)", 1);
-            ResetMonthsConfig.UI.Tooltip = "Number of Moons (CurrentMonth) between resets. Set to 1 to reset every moon (default), 2 to reset every 2 moons, etc. Set to -1 or 0 to disable reset.";
+            // --- SECTION 1: PURCHASE LIMITS & RESET ---
+            RegisterSectionDivider("1. Purchase Limits & Reset", "Settings for booster pack purchase limits and reset intervals.");
 
-            UsePercentageConfig = Config.GetEntry<bool>("Use Percentage Increase", false);
-            UsePercentageConfig.UI.Tooltip = "Whether to use percentage-based price increase instead of a flat value (e.g., 20% on a 5-cost pack increases price by +1 to 6, rounded up).";
+            MaxPurchasesConfig = RegisterConfig("Max Purchases", 5,
+                "Max cheap pack buys per month before locking (MAX). Set to -1 or 0 to disable limit.");
 
-            // Register Board Activation Condition Settings
-            EnableBoardConditionsConfig = Config.GetEntry<bool>("Enable Board Conditions", false);
-            EnableBoardConditionsConfig.UI.Tooltip = "Whether to only activate the mod (limits and price increases) on a board once specific conditions are met. If disabled (default), the mod is always active on all boards.";
+            PerPackLimitConfig = RegisterConfig("Limit Per Individual Pack", true,
+                "true: each pack has its own limit. false: limit is shared globally across all cheap packs.");
 
-            EnableMoonConditionConfig = Config.GetEntry<bool>("Condition: By Moon", false);
-            EnableMoonConditionConfig.UI.Tooltip = "Activate the mod on a board once the Moon number reaches or passes the specified threshold.";
+            TrackedCheapestCountConfig = RegisterConfig("Cheapest Packs Count", 2,
+                "Number of cheapest packs to track per board (e.g. 2 tracks the 2 lowest-cost packs). Set to -1 or 0 to disable.");
 
-            ActivationMoonConfig = Config.GetEntry<int>("Condition: Activation Moon", 5);
-            ActivationMoonConfig.UI.Tooltip = "The Moon number at or after which the mod activates (CurrentMonth >= value). For example, 5 means active starting on Moon 5. Must be 1 or higher.";
+            ResetMonthsConfig = RegisterConfig("Reset Time (Moons)", 1,
+                "Number of Moons between resets (1 = every Moon, 2 = every 2 Moons, -1/0 = never).");
 
-            EnableCardConditionConfig = Config.GetEntry<bool>("Condition: By Card Count", false);
-            EnableCardConditionConfig.UI.Tooltip = "Activate the mod on a board when a specific card count threshold is reached on that board.";
+            // --- SECTION 2: PRICE ESCALATION ---
+            RegisterSectionDivider("2. Price Escalation", "Settings for pack price increases per purchase (flat gold or percentage).");
 
-            ActivationCardIdConfig = Config.GetEntry<string>("Condition: Card ID to Count", "villager");
-            ActivationCardIdConfig.UI.Tooltip = "The Card ID to count on the board (e.g., 'villager', 'coin', 'wood'). Multiple IDs can be separated by commas (e.g., 'villager, militia'). Leave blank to count ALL cards on the board.";
+            PriceIncreaseConfig = RegisterConfig("Price Increase per Buy (Default)", 1,
+                "Price increase per purchase (flat gold or percentage). Set to -1 or 0 to disable.");
 
-            ActivationCardCountConfig = Config.GetEntry<int>("Condition: Required Card Count", 10);
-            ActivationCardCountConfig.UI.Tooltip = "Minimum number of cards required on the board to activate the mod. Must be 1 or higher.";
+            UsePercentageConfig = RegisterConfig("Use Percentage Increase", false,
+                "If ON, price increases by a % of base cost (rounded up) instead of flat gold.");
 
-            RequireAllConditionsConfig = Config.GetEntry<bool>("Condition: Require ALL (AND)", false);
-            RequireAllConditionsConfig.UI.Tooltip = "If enabled, ALL active conditions (Moon AND Card Count) must be satisfied. If disabled (default), satisfying EITHER condition (Moon OR Card Count) will activate the mod.";
+            PerBoardPriceIncreaseConfig = RegisterConfig("Enable Board Specific Prices", false,
+                "If ON, allows custom price increases for each board. If OFF, Default setting is used.");
 
-            PersistentActivationConfig = Config.GetEntry<bool>("Condition: Stay Active Once Triggered", false);
-            PersistentActivationConfig.UI.Tooltip = "Once a board satisfies the activation conditions, keep the mod active permanently on that board (even if card count drops). If false (default), conditions are evaluated dynamically.";
+            // --- SECTION 3: BOARD ACTIVATION CONDITIONS ---
+            RegisterSectionDivider("3. Board Activation Conditions", "Settings to require conditions (Moon / Card count) before mod features activate.");
+
+            EnableBoardConditionsConfig = RegisterConfig("Enable Board Conditions", false,
+                "Master switch: only activate limits/prices once conditions below are met. If OFF, mod is always active.");
+
+            EnableMoonConditionConfig = RegisterConfig("Condition: By Moon", false,
+                "Activate mod when the board reaches or passes the specified Moon number.");
+
+            ActivationMoonConfig = RegisterConfig("Condition: Activation Moon", 5,
+                "Moon number at or after which the mod activates (1 or higher).");
+
+            EnableCardConditionConfig = RegisterConfig("Condition: By Card Count", false,
+                "Activate mod when matching card count on the board reaches the threshold.");
+
+            ActivationCardIdConfig = RegisterConfig("Condition: Card ID to Count", "villager",
+                "Card ID to count (e.g. 'villager', 'coin'). Supports 'villager'/'vilager'. Blank/'*' counts all cards.");
+
+            ActivationCardCountConfig = RegisterConfig("Condition: Required Card Count", 3,
+                "Minimum matching cards required to activate the mod (1 or higher).");
+
+            RequireAllConditionsConfig = RegisterConfig("Condition: Require ALL (AND)", false,
+                "If ON, ALL active conditions must be met (Moon AND Cards). If OFF, ANY active condition activates (Moon OR Cards).");
+
+            PersistentActivationConfig = RegisterConfig("Condition: Stay Active Once Triggered", false,
+                "If ON, mod stays active permanently once triggered. If OFF, conditions are evaluated dynamically in real time.");
+
+            // --- SECTION 4: SAVE MANAGEMENT & TOOLS ---
+            RegisterSectionDivider("4. Save Actions", "Tools to manage and reset counters for the current save round.");
 
             Logger.Log($"[Config] Initial settings: MaxPurchases={MaxPurchasesConfig.Value}, PerPackLimit={PerPackLimitConfig.Value}, PriceIncreaseDefault={PriceIncreaseConfig.Value}, PerBoardPriceIncrease={PerBoardPriceIncreaseConfig.Value}, TrackedCheapestCount={TrackedCheapestCountConfig.Value}, ResetMonths={ResetMonthsConfig.Value}, UsePercentage={UsePercentageConfig.Value}, EnableConditions={EnableBoardConditionsConfig.Value}, ByMoon={EnableMoonConditionConfig.Value} (Moon={ActivationMoonConfig.Value}), ByCard={EnableCardConditionConfig.Value} (Id='{ActivationCardIdConfig.Value}', Count={ActivationCardCountConfig.Value}), RequireAll={RequireAllConditionsConfig.Value}, PersistentActivation={PersistentActivationConfig.Value}");
 
@@ -193,6 +208,68 @@ namespace LimitBoostersNS
             // Apply Harmony patches
             Harmony?.PatchAll();
             Logger.Log("LimitBoosters initialized with Harmony.");
+        }
+
+        private ConfigEntry<T> RegisterConfig<T>(string key, T defaultValue, string tooltip)
+        {
+            var entry = Config.GetEntry<T>(key, defaultValue);
+            entry.UI.Tooltip = tooltip;
+            return entry;
+        }
+
+        private ConfigEntry<string> RegisterSectionDivider(string sectionTitle, string description = "")
+        {
+            var entry = Config.GetEntry<string>($"Section_{sectionTitle.Replace(" ", "_")}", "");
+            entry.UI.Name = sectionTitle;
+            entry.UI.Tooltip = string.IsNullOrEmpty(description) ? $"Section: {sectionTitle}" : description;
+            entry.UI.Hidden = true;
+            entry.UI.OnUI = (entryBase) =>
+            {
+                if (ModOptionsScreen.instance == null) return;
+
+                // Add spacing before section divider if there are already items
+                if (ModOptionsScreen.instance.SpacerPrefab != null && ModOptionsScreen.instance.ButtonsParent.childCount > 0)
+                {
+                    var spacer = UnityEngine.Object.Instantiate(ModOptionsScreen.instance.SpacerPrefab, ModOptionsScreen.instance.ButtonsParent);
+                    spacer.transform.localScale = Vector3.one;
+                }
+
+                UnityEngine.RectTransform? labelObj = null;
+                if (PrefabManager.instance?.NormalLabelPrefab != null)
+                {
+                    labelObj = UnityEngine.Object.Instantiate(PrefabManager.instance.NormalLabelPrefab, ModOptionsScreen.instance.ButtonsParent);
+                }
+                else if (ModOptionsScreen.instance.Title != null)
+                {
+                    labelObj = UnityEngine.Object.Instantiate(ModOptionsScreen.instance.Title, ModOptionsScreen.instance.ButtonsParent);
+                }
+
+                if (labelObj != null)
+                {
+                    labelObj.transform.localScale = Vector3.one;
+                    labelObj.transform.localPosition = Vector3.zero;
+                    labelObj.transform.localRotation = Quaternion.identity;
+
+                    var customBtn = labelObj.GetComponent<CustomButton>();
+                    if (customBtn != null) customBtn.enabled = false;
+                    var img = labelObj.GetComponent<UnityEngine.UI.Image>();
+                    if (img != null) img.enabled = false;
+
+                    var tmp = labelObj.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                    if (tmp != null)
+                    {
+                        tmp.text = $"<color=#FFD700><b>=== [ {sectionTitle.ToUpperInvariant()} ] ===</b></color>";
+                        tmp.alignment = TMPro.TextAlignmentOptions.Center;
+                    }
+
+                    if (!string.IsNullOrEmpty(description))
+                    {
+                        var showTooltip = labelObj.GetComponent<ShowTooltip>() ?? labelObj.gameObject.AddComponent<ShowTooltip>();
+                        showTooltip.MyTooltipText = description;
+                    }
+                }
+            };
+            return entry;
         }
 
         public void RegisterBoardConfig(string boardId, string boardName = "")
