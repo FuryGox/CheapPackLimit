@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace LimitBoostersNS
@@ -112,11 +113,21 @@ namespace LimitBoostersNS
             PersistentActivationConfig = RegisterConfig("Condition: Stay Active Once Triggered", false,
                 "If ON, mod stays active permanently once triggered. If OFF, conditions are evaluated dynamically in real time.");
 
-            // --- SECTION 4: SAVE MANAGEMENT & TOOLS ---
-            RegisterSectionDivider("4. Save Actions", "Tools to manage and reset counters for the current save round.");
+            // Section 4: Board price configs
+            RegisterSectionDivider("4. Board price configs", "Each listed board will have its own price increase settings.");
 
-            Logger.Log($"[Config] Initial settings: MaxPurchases={MaxPurchasesConfig.Value}, PerPackLimit={PerPackLimitConfig.Value}, PriceIncreaseDefault={PriceIncreaseConfig.Value}, PerBoardPriceIncrease={PerBoardPriceIncreaseConfig.Value}, TrackedCheapestCount={TrackedCheapestCountConfig.Value}, ResetMonths={ResetMonthsConfig.Value}, UsePercentage={UsePercentageConfig.Value}, EnableConditions={EnableBoardConditionsConfig.Value}, ByMoon={EnableMoonConditionConfig.Value} (Moon={ActivationMoonConfig.Value}), ByCard={EnableCardConditionConfig.Value} (Id='{ActivationCardIdConfig.Value}', Count={ActivationCardCountConfig.Value}), RequireAll={RequireAllConditionsConfig.Value}, PersistentActivation={PersistentActivationConfig.Value}");
+            if (WorldManager.instance?.Boards != null)
+            {
+                List<GameBoard> gameboard = WorldManager.instance.Boards;
+                Log($"[Boards] Discovered {gameboard.Count} game board(s).");
+                foreach (var board in gameboard)
+                {
+                    RegisterBoardConfig(board.Id, board.name);
+                }
+            }
 
+            // --- SECTION 5: SAVE MANAGEMENT & TOOLS ---
+            RegisterSectionDivider("5. Save Actions", "Tools to manage and reset counters for the current save round.");
             // Button to Reset Mod Data for the Current Save Round
             var resetSaveConfig = Config.GetEntry<bool>("ResetCurrentSave", false);
             resetSaveConfig.UI.Hidden = true;
@@ -142,7 +153,6 @@ namespace LimitBoostersNS
                     {
                         SaveToExtraKeyValues();
                         SaveManager.instance?.Save(saveRound: true);
-                        Log("[Save] In-game manual reset saved via SaveManager.Save(saveRound: true).");
 
                         // Refresh Booster text immediately
                         if (WorldManager.instance.AllBoosterBoxes != null)
@@ -180,20 +190,15 @@ namespace LimitBoostersNS
                     }
 
                     btn.TextMeshPro.text = "<color=green>Reset Done!</color>";
+                    Utils.DelayAction(() => {
+                        if (btn != null && btn.TextMeshPro != null)
+                        {
+                            btn.TextMeshPro.text = "Reset Limits (Current Save)";
+                        }
+                    }, 2000);
                     Log("[Reset] Manually reset limits and board activations for the current save round from Mod Options.");
                 };
             };
-
-            if (WorldManager.instance?.Boards != null)
-            {
-                List<GameBoard> gameboard = WorldManager.instance.Boards;
-                Log($"[Boards] Discovered {gameboard.Count} game board(s).");
-                foreach (var board in gameboard)
-                {
-                    Log($"[Boards] Board found: Id='{board.Id}', Name='{board.name}'");
-                    RegisterBoardConfig(board.Id, board.name);
-                }
-            }
 
             // Safely unpatch any existing patches with this instance ID before applying to prevent duplicate hooks
             try
@@ -280,7 +285,6 @@ namespace LimitBoostersNS
             var entry = Config.GetEntry<int>($"Price Increase ({displayName})", -2);
             entry.UI.Tooltip = $"Price increase per buy for '{boardId}' ({displayName}). Set to -2 to use Default setting. Set to -1 or 0 to disable. (Requires 'Enable Board Specific Prices' to be ON).";
             BoardPriceIncreaseConfigs[boardId] = entry;
-            Log($"[Config] Registered board price increase for '{boardId}' ({displayName}): value={entry.Value}");
         }
 
         public int GetPriceIncreaseForBoard(string boardId)
@@ -310,7 +314,6 @@ namespace LimitBoostersNS
                 CurrentRoundExtraKeyValuesRef = currentKeyValues;
                 LoadFromExtraKeyValues();
                 CheckMonthReset("SessionChange");
-                Log($"[Session] Save round session changed. Synced counters: PurchasesThisMonth={PurchasesThisMonth}, LastResetMonth={LastResetMonth}, Board='{LastBoardId}'.");
             }
 
             // Dynamically register any boards discovered during gameplay
@@ -329,7 +332,6 @@ namespace LimitBoostersNS
             string currentSig = $"{Instance?.EnableBoardConditionsConfig?.Value}|{Instance?.EnableMoonConditionConfig?.Value}|{Instance?.ActivationMoonConfig?.Value}|{Instance?.EnableCardConditionConfig?.Value}|{Instance?.ActivationCardIdConfig?.Value}|{Instance?.ActivationCardCountConfig?.Value}|{Instance?.RequireAllConditionsConfig?.Value}|{Instance?.PersistentActivationConfig?.Value}";
             if (_lastConditionConfigSignature != "" && _lastConditionConfigSignature != currentSig)
             {
-                Log($"[ConditionConfig] Settings changed in menu (Sig: '{currentSig}'). Clearing ActivatedBoards cache.");
                 ActivatedBoards.Clear();
                 SaveToExtraKeyValues();
             }
@@ -350,7 +352,6 @@ namespace LimitBoostersNS
             // Board transition check: if the active board changed, update tracking without miscalculating moon delta
             if (!string.IsNullOrEmpty(currentBoardId) && !string.IsNullOrEmpty(LastBoardId) && currentBoardId != LastBoardId)
             {
-                Log($"[BoardSwitch] Switched board from '{LastBoardId}' to '{currentBoardId}' (CurrentMonth={currentMonth}, LastResetMonth={LastResetMonth}). Updating board tracking.");
                 LastBoardId = currentBoardId;
                 LastResetMonth = currentMonth;
                 SaveToExtraKeyValues();
@@ -363,7 +364,6 @@ namespace LimitBoostersNS
             {
                 LastResetMonth = currentMonth;
                 int resetIntervalVal = Instance?.ResetMonthsConfig?.Value ?? 1;
-                Log($"[MonthReset] Initialized LastResetMonth={LastResetMonth} on board '{currentBoardId}' (CurrentMonth={currentMonth}, ResetInterval={resetIntervalVal}).");
                 SaveToExtraKeyValues();
                 return;
             }
@@ -665,7 +665,6 @@ namespace LimitBoostersNS
             {
                 ActivatedBoards.Clear();
                 SaveToExtraKeyValues();
-                Log("[Condition] Persistent activation is disabled. Cleared ActivatedBoards cache.");
             }
 
             // 4. Check active condition switches and validate targets (> 0)
@@ -728,7 +727,6 @@ namespace LimitBoostersNS
                 {
                     ActivatedBoards.Add(boardId);
                     SaveToExtraKeyValues();
-                    Log($"[Condition] Board '{boardId}' met activation conditions and is now persistently marked as ACTIVE.");
                 }
             }
 
@@ -736,7 +734,6 @@ namespace LimitBoostersNS
             {
                 _lastLoggedConditionMet = isMet;
                 _lastLoggedReason = reason;
-                Log($"[Condition] Status updated: {reason}");
             }
 
             return isMet;
@@ -759,7 +756,6 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
-            LimitBoosters.Log($"[Month] WorldManager.IncrementMonth triggered (New Month: {WorldManager.instance?.CurrentMonth}). Checking month reset...");
             LimitBoosters.CheckMonthReset("IncrementMonth");
         }
     }
@@ -817,14 +813,6 @@ namespace LimitBoostersNS
                 bool isLimited = LimitBoosters.IsPackLimitReached(__instance.BoosterId, board);
                 bool perPack = LimitBoosters.Instance?.PerPackLimitConfig?.Value ?? true;
                 string limitStr = maxLimit <= 0 ? "Unlimited" : (perPack ? $"{packCount}/{maxLimit}" : $"{LimitBoosters.PurchasesThisMonth}/{maxLimit}");
-
-                LimitBoosters.Log(
-                    $"[BuyPack] Purchased cheap booster '{__instance.BoosterId}' on board '{boardId}' (Month: {currentMonth}) | Cost: {cost} {currency} (Base: {baseCost}, Increase: +{increase}) | Pack buys: {limitStr} | Total cheap buys this month: {LimitBoosters.PurchasesThisMonth} | Status: {(isLimited ? "LOCKED (Limit Reached)" : "Available")}");
-            }
-            else
-            {
-                LimitBoosters.Log(
-                    $"[BuyPack] Purchased regular booster '{__instance.BoosterId}' on board '{boardId}' (Month: {currentMonth}) | Cost: {cost} {currency} (Base: {baseCost}) | Status: Untracked");
             }
         }
     }
@@ -933,7 +921,6 @@ namespace LimitBoostersNS
     {
         public static void Prefix()
         {
-            LimitBoosters.Log($"[Save] WorldManager.GetSaveRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}', PurchasesThisMonth: {LimitBoosters.PurchasesThisMonth}, LastResetMonth: {LimitBoosters.LastResetMonth}, PackPurchases: {JsonConvert.SerializeObject(LimitBoosters.PackPurchases)}). Persisting pack limit data...");
             LimitBoosters.SaveToExtraKeyValues();
         }
     }
@@ -946,7 +933,6 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
-            LimitBoosters.Log($"[Load] WorldManager.LoadSaveRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}'). Loading pack limit data...");
             LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
             LimitBoosters.LoadFromExtraKeyValues();
             LimitBoosters.CheckMonthReset("LoadSaveRound");
@@ -961,11 +947,38 @@ namespace LimitBoostersNS
     {
         public static void Postfix()
         {
-            LimitBoosters.Log($"[NewRound] WorldManager.StartNewRound triggered (Month: {WorldManager.instance?.CurrentMonth}, Board: '{WorldManager.instance?.CurrentBoard?.Id}'). Initializing counters...");
             LimitBoosters.CurrentRoundExtraKeyValuesRef = WorldManager.instance?.RoundExtraKeyValues;
             LimitBoosters.ActivatedBoards.Clear();
             LimitBoosters.ResetMonthlyCounters("StartNewRound");
         }
     }
     #endregion
-}
+
+    public static class Utils
+    {
+        /// <summary>
+        /// Executes an action after a specified delay in milliseconds.
+        /// Uses Task.Delay which returns to Unity's synchronization context.
+        /// </summary>
+        public static async void DelayAction(Action action, int milliseconds)
+        {
+            try
+            {
+                await Task.Delay(milliseconds);
+                action?.Invoke();
+            }
+            catch (Exception)
+            {
+                // Silently ignore if interrupted or target is destroyed
+            }
+        }
+
+        /// <summary>
+        /// Executes an action after a specified delay in seconds.
+        /// </summary>
+        public static void DelayAction(Action action, float seconds)
+        {
+            DelayAction(action, (int)(seconds * 1000f));
+        }
+    }
+}
